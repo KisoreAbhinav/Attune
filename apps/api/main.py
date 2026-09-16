@@ -1,9 +1,12 @@
 import os
+from pathlib import Path
 
+from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-
 from lab_reports import configured_providers, primary_provider, router as lab_reports_router
+
+load_dotenv(Path(__file__).with_name(".env"))
 
 app = FastAPI(title="Attune API", version="0.1.0")
 app.add_middleware(
