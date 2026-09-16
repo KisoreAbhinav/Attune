@@ -14,7 +14,7 @@ export default function AppPage() {
         <h1 className="text-4xl font-semibold tracking-tight">Choose a service</h1>
         <p className="text-muted-foreground">A starting point for exploring medical image analysis.</p>
       </header>
-      <section aria-label="Services" className={`grid gap-6 md:grid-cols-3 ${styles.services}`}>
+      <section aria-label="Services" className={`grid gap-6 md:grid-cols-2 xl:grid-cols-4 ${styles.services}`}>
         {services.map((service) => (
           <Card key={service.slug} className={styles.card}>
             <CardHeader>

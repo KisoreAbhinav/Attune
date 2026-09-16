@@ -6,7 +6,7 @@ import { Card, CardHeader, CardTitle, CardDescription } from "@/components/ui/ca
 import { services } from "@/lib/services";
 
 export function generateStaticParams() {
-  return services.map(({ slug }) => ({ service: slug }));
+  return services.filter(({ slug }) => slug !== "lab-report-explainer").map(({ slug }) => ({ service: slug }));
 }
 
 export default async function ServicePage({ params }: { params: Promise<{ service: string }> }) {
