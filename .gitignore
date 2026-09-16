@@ -13,3 +13,5 @@ __pycache__/
 *.tsbuildinfo
 *.log
 .vercel/
+prompt.md
+checklist.md
