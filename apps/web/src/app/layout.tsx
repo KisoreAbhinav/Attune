@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { ViewTransitions } from "next-view-transitions";
+import styles from "./transitions.module.css";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -19,11 +21,13 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
+    <ViewTransitions>
     <html
       lang="en"
-      className={`${geistSans.variable} ${geistMono.variable} dark h-full antialiased`}
+      className={`${geistSans.variable} ${geistMono.variable} ${styles.transitions} dark h-full antialiased`}
     >
       <body className="min-h-full flex flex-col">{children}</body>
     </html>
+    </ViewTransitions>
   );
 }
