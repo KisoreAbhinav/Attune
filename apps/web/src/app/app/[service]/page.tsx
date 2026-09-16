@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { XrayAnalyzer } from "@/components/xray-analyzer";
 import { services } from "@/lib/services";
 
 export function generateStaticParams() {
@@ -13,6 +14,8 @@ export default async function ServicePage({ params }: { params: Promise<{ servic
   const { service: slug } = await params;
   const service = services.find((item) => item.slug === slug);
   if (!service) notFound();
+
+  if (slug === "x-ray") return <XrayAnalyzer />;
 
   return (
     <main className="mx-auto min-h-screen max-w-3xl space-y-8 px-6 py-16">
