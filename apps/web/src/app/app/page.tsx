@@ -21,7 +21,7 @@ export default function AppPage() {
               <CardTitle>{service.name}</CardTitle>
               <CardDescription>{service.description}</CardDescription>
             </CardHeader>
-            <CardFooter>
+            <CardFooter className="mt-auto">
               <Button asChild variant="outline"><Link href={`/app/${service.slug}`}>Explore {service.name} →</Link></Button>
             </CardFooter>
           </Card>
