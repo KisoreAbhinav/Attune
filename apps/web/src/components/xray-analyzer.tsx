@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { parseDicom, renderDicomFrame } from "@/lib/dicom";
+import { demoResults } from "@/lib/demo-results";
 import { demoScans } from "@/lib/demo-scans";
 import { apiRequest, fileToBase64, imageToBase64, type ApiInput, type ChatMessage, type IntakeState, type Report, type ScanMode } from "@/lib/xray";
 
@@ -68,6 +69,9 @@ export function XrayAnalyzer() {
   const [annotations, setAnnotations] = useState<Array<Point & { label: string }>>([]);
   const [annotationLabel, setAnnotationLabel] = useState("Review");
   const [sampleId, setSampleId] = useState("");
+  const selectionVersion = useRef(0);
+  const selectedSample = demoScans["x-ray"].find((sample) => sample.id === sampleId);
+  const sampleResult = selectedSample ? demoResults["x-ray"][selectedSample.id] : undefined;
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const dragRef = useRef<{ x: number; y: number; panX: number; panY: number } | null>(null);
 
@@ -87,6 +91,8 @@ export function XrayAnalyzer() {
   }, [state.dicom, currentFrame, windowCenter, windowWidth]);
 
   function chooseMode(mode: ScanMode) {
+    selectionVersion.current += 1;
+    setSampleId("");
     setState({ ...initialState, mode });
     setReport(null);
     setHistory([]);
@@ -99,6 +105,9 @@ export function XrayAnalyzer() {
 
   async function handleFile(file: File | undefined) {
     if (!file) return;
+    selectionVersion.current += 1;
+    setSampleId("");
+    setHistory([]);
     const validationError = fileError(file, state.mode);
     setError(validationError);
     setNotice(null);
@@ -128,7 +137,10 @@ export function XrayAnalyzer() {
   async function chooseReferenceSample(id: string) {
     const sample = demoScans["x-ray"].find((item) => item.id === id);
     if (!sample) return;
+    const version = ++selectionVersion.current;
     setSampleId(id);
+    setState((current) => ({ ...current, file: null, dicom: null }));
+    setHistory([]);
     setError(null);
     setReport(null);
     setNotice(null);
@@ -137,9 +149,15 @@ export function XrayAnalyzer() {
       if (!response.ok) throw new Error("The selected reference image could not be loaded.");
       const blob = await response.blob();
       const extension = sample.path.split(".").pop() ?? "jpg";
-      await handleFile(new File([blob], `attune-${sample.id}.${extension}`, { type: blob.type }));
+      if (version !== selectionVersion.current) return;
+      const file = new File([blob], `attune-${sample.id}.${extension}`, { type: blob.type });
+      const validationError = fileError(file, "single_image");
+      if (validationError) throw new Error(validationError);
+      setState((current) => ({ ...current, file, dicom: null }));
       setNotice(`${sample.label}: ${sample.title}. This source-labelled reference image is for testing and education only.`);
     } catch (sampleError) {
+      if (version !== selectionVersion.current) return;
+      setSampleId("");
       setError(sampleError instanceof Error ? sampleError.message : "The selected reference image could not be loaded.");
     }
   }
@@ -199,6 +217,7 @@ export function XrayAnalyzer() {
       setError("The DICOM file must parse successfully before analysis.");
       return;
     }
+    const version = selectionVersion.current;
     setBusy(true);
     try {
       let imageBase64: string;
@@ -221,10 +240,12 @@ export function XrayAnalyzer() {
         view: "frontal",
       };
       const result = await apiRequest<Report>("/api/scan/analyze", input);
+      if (version !== selectionVersion.current) return;
       setReport(result);
       setHistory([]);
       setNotice("Processing completed for this active-session analysis. It is not a diagnosis.");
     } catch (analysisError) {
+      if (version !== selectionVersion.current) return;
       setError(analysisError instanceof Error ? analysisError.message : "Analysis failed. Check the local API and model configuration.");
     } finally {
       setBusy(false);
@@ -306,7 +327,7 @@ export function XrayAnalyzer() {
                   </button>
                 ))}
               </div>
-              {state.mode === "single_image" && <div className="space-y-2"><label htmlFor="xray-reference" className="text-sm font-medium">Reference collection</label><Select value={sampleId} onValueChange={(value) => void chooseReferenceSample(value)}><SelectTrigger id="xray-reference" className="w-full"><SelectValue placeholder="Choose a normal or abnormal X-ray" /></SelectTrigger><SelectContent><SelectGroup><SelectLabel>Normal · 4 scans</SelectLabel>{demoScans["x-ray"].filter((sample) => sample.label === "Normal reference").map((sample) => <SelectItem key={sample.id} value={sample.id}>{sample.title}</SelectItem>)}</SelectGroup><SelectGroup><SelectLabel>Abnormal · 4 scans</SelectLabel>{demoScans["x-ray"].filter((sample) => sample.label === "Abnormal reference").map((sample) => <SelectItem key={sample.id} value={sample.id}>{sample.title}</SelectItem>)}</SelectGroup></SelectContent></Select><p className="text-xs text-muted-foreground">Locally bundled, source-labelled educational references. Selecting one loads it into this active session.</p></div>}
+              {state.mode === "single_image" && <div className="space-y-2"><label htmlFor="xray-reference" className="text-sm font-medium">Reference collection</label><Select value={sampleId} onValueChange={(value) => void chooseReferenceSample(value)}><SelectTrigger id="xray-reference" className="w-full"><SelectValue placeholder="Choose a normal or abnormal X-ray" /></SelectTrigger><SelectContent><SelectGroup><SelectLabel>Normal · 4 scans</SelectLabel>{demoScans["x-ray"].filter((sample) => sample.label === "Normal reference").map((sample) => <SelectItem key={sample.id} value={sample.id}>{sample.title}</SelectItem>)}</SelectGroup><SelectGroup><SelectLabel>Abnormal · 4 scans</SelectLabel>{demoScans["x-ray"].filter((sample) => sample.label === "Abnormal reference").map((sample) => <SelectItem key={sample.id} value={sample.id}>{sample.title}</SelectItem>)}</SelectGroup></SelectContent></Select><p className="text-xs text-muted-foreground">Select a preset to view its image and instant sample report. Live analysis runs only when requested.</p></div>}
               <div className="space-y-2">
                 <label htmlFor="scan-file" className="text-sm font-medium">{state.mode === "dicom" ? "DICOM file or folder" : "X-ray image"}</label>
                 <input id="scan-file" type="file" accept={state.mode === "dicom" ? ".dcm,application/dicom" : "image/png,image/jpeg,image/webp"} multiple={state.mode === "dicom"} {...(state.mode === "dicom" ? directoryInputProps : {})} onChange={(event) => { setSampleId(""); void handleFile(event.target.files?.[0]); }} className="block w-full rounded-lg border border-input bg-background px-3 py-2 text-sm file:mr-3 file:rounded-md file:border-0 file:bg-muted file:px-3 file:py-1.5 file:text-sm" aria-describedby="file-help" />
@@ -321,7 +342,7 @@ export function XrayAnalyzer() {
             </CardContent>
             <CardFooter className="flex flex-wrap items-center justify-between gap-3">
               <span className="text-xs text-muted-foreground">{state.file ? `Selected: ${state.file.name}` : "No scan selected"}{state.attachment ? " · Attachment ready" : ""}</span>
-              <Button type="button" onClick={() => { setState(initialState); setReport(null); setHistory([]); setError(null); setNotice(null); }} variant="ghost"><RefreshCw /> Reset</Button>
+              <Button type="button" onClick={() => { selectionVersion.current += 1; setSampleId(""); setState(initialState); setReport(null); setHistory([]); setError(null); setNotice(null); }} variant="ghost"><RefreshCw /> Reset</Button>
             </CardFooter>
           </Card>
 
@@ -362,7 +383,21 @@ export function XrayAnalyzer() {
         <section className="space-y-6" aria-label="Analysis report">
           {error && <div role="alert" className="rounded-xl border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">{error}</div>}
           {notice && <div role="status" className="rounded-xl border border-border bg-muted/40 px-4 py-3 text-sm">{notice}</div>}
-          {!report && <Card><CardHeader><CardTitle>Structured report</CardTitle><CardDescription>After a successful local inference request, the report, uncertainty, chat history, and PDF payload live only in this page.</CardDescription></CardHeader><CardContent><div className="flex items-center gap-3 rounded-lg border border-dashed p-5 text-sm text-muted-foreground"><MessageCircle /> Report sections will appear here.</div></CardContent></Card>}
+          {sampleResult && selectedSample && !report && <Card data-testid="sample-report">
+        <CardHeader>
+          <Badge variant="secondary" className="w-fit">Sample report · instant preview</Badge>
+          <CardTitle>{selectedSample.title}</CardTitle>
+          <CardDescription>Prewritten educational example. No AI analysis was run.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          <div><h3 className="font-medium">Simplified explanation</h3><p className="mt-2 text-sm leading-6 text-muted-foreground">{sampleResult.summary}</p></div>
+          <div><h3 className="font-medium">Reference findings</h3><div className="mt-3 space-y-3">{sampleResult.findings.map((finding) => <div key={finding.clinical} className="rounded-lg border p-4 text-sm"><p className="font-medium">{finding.clinical}</p><p className="mt-2 leading-6 text-muted-foreground">{finding.explanation}</p></div>)}</div></div>
+          <div><h3 className="font-medium">Impression</h3><p className="mt-2 text-sm leading-6 text-muted-foreground">{sampleResult.impression}</p></div>
+          <div><h3 className="font-medium">Next steps</h3><p className="mt-2 text-sm leading-6 text-muted-foreground">Explore another preset or run live analysis to request a new model review. Real scans need review by a qualified clinician.</p></div>
+          <a href={selectedSample.sourceUrl} target="_blank" rel="noreferrer" className="inline-flex text-sm underline underline-offset-4">Image source and context</a>
+        </CardContent>
+      </Card>}
+          {!report && !sampleResult && <Card><CardHeader><CardTitle>Structured report</CardTitle><CardDescription>After a successful local inference request, the report, uncertainty, chat history, and PDF payload live only in this page.</CardDescription></CardHeader><CardContent><div className="flex items-center gap-3 rounded-lg border border-dashed p-5 text-sm text-muted-foreground"><MessageCircle /> Report sections will appear here.</div></CardContent></Card>}
           {report && <>
             <Card>
               <CardHeader><div className="flex flex-wrap items-start justify-between gap-3"><div><Badge variant={report.status === "complete" ? "secondary" : "destructive"}>{statusCopy(report.status)}</Badge><CardTitle className="mt-3">X-ray analysis report</CardTitle><CardDescription>{report.date} · age {report.patient_age}</CardDescription></div><Button type="button" variant="outline" onClick={() => void exportPdf()}><Download /> Export PDF</Button></div></CardHeader>

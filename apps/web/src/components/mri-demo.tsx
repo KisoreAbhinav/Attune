@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { demoResults } from "@/lib/demo-results";
 import { demoScans, type DemoScanService } from "@/lib/demo-scans";
 import { apiRequest, fileToBase64, type Report } from "@/lib/xray";
 
@@ -26,6 +27,7 @@ export function MriDemo({ service }: Props) {
   const uploadUrl = useMemo(() => upload ? URL.createObjectURL(upload) : null, [upload]);
   const samples = demoScans[service];
   const selected = samples.find((sample) => sample.id === sampleId);
+  const sampleResult = selected ? demoResults[service][selected.id] : undefined;
 
   useEffect(() => () => { if (uploadUrl) URL.revokeObjectURL(uploadUrl); }, [uploadUrl]);
 
@@ -63,10 +65,10 @@ export function MriDemo({ service }: Props) {
       </header>
       <div className="grid gap-6 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
         <Card>
-          <CardHeader><CardTitle>Choose a scan</CardTitle><CardDescription>Reference labels come from the linked source and are for interface testing and education only.</CardDescription></CardHeader>
+          <CardHeader><CardTitle>Choose a scan</CardTitle><CardDescription>Choose a preset for an instant sample report, or upload your own scan for live analysis.</CardDescription></CardHeader>
           <CardContent className="space-y-5">
-            <div className="space-y-2"><label htmlFor="reference-scan" className="text-sm font-medium">Reference collection</label><Select value={sampleId} onValueChange={(value) => { setSampleId(value); setUpload(null); }}><SelectTrigger id="reference-scan" className="w-full"><SelectValue placeholder="Select a reference image" /></SelectTrigger><SelectContent><SelectGroup><SelectLabel>Normal · 4 scans</SelectLabel>{samples.filter((sample) => sample.label === "Normal reference").map((sample) => <SelectItem key={sample.id} value={sample.id}>{sample.title}</SelectItem>)}</SelectGroup><SelectGroup><SelectLabel>Abnormal · 4 scans</SelectLabel>{samples.filter((sample) => sample.label === "Abnormal reference").map((sample) => <SelectItem key={sample.id} value={sample.id}>{sample.title}</SelectItem>)}</SelectGroup></SelectContent></Select></div>
-            <div className="space-y-2"><label htmlFor="mri-upload" className="text-sm font-medium">Or upload an image</label><input id="mri-upload" type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => { setUpload(event.target.files?.[0] ?? null); setSampleId(""); }} className="block w-full rounded-lg border border-input bg-background px-3 py-2 text-sm file:mr-3 file:rounded-md file:border-0 file:bg-muted file:px-3 file:py-1.5 file:text-sm" /><p className="text-xs text-muted-foreground">PNG, JPEG, or WebP up to 20 MB. The upload stays in this browser.</p></div>
+            <div className="space-y-2"><label htmlFor="reference-scan" className="text-sm font-medium">Reference collection</label><Select disabled={busy} value={sampleId} onValueChange={(value) => { setSampleId(value); setUpload(null); setReport(null); setError(null); }}><SelectTrigger id="reference-scan" className="w-full"><SelectValue placeholder="Select a reference image" /></SelectTrigger><SelectContent><SelectGroup><SelectLabel>Normal · 4 scans</SelectLabel>{samples.filter((sample) => sample.label === "Normal reference").map((sample) => <SelectItem key={sample.id} value={sample.id}>{sample.title}</SelectItem>)}</SelectGroup><SelectGroup><SelectLabel>Abnormal · 4 scans</SelectLabel>{samples.filter((sample) => sample.label === "Abnormal reference").map((sample) => <SelectItem key={sample.id} value={sample.id}>{sample.title}</SelectItem>)}</SelectGroup></SelectContent></Select></div>
+            <div className="space-y-2"><label htmlFor="mri-upload" className="text-sm font-medium">Or upload an image</label><input id="mri-upload" disabled={busy} type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => { setUpload(event.target.files?.[0] ?? null); setSampleId(""); setReport(null); setError(null); }} className="block w-full rounded-lg border border-input bg-background px-3 py-2 text-sm file:mr-3 file:rounded-md file:border-0 file:bg-muted file:px-3 file:py-1.5 file:text-sm" /><p className="text-xs text-muted-foreground">PNG, JPEG, or WebP up to 20 MB. The upload stays in this browser.</p></div>
             <label className="block space-y-2 text-sm font-medium">Age<input required min="0" max="120" type="number" value={age} onChange={(event) => setAge(event.target.value)} className="block h-9 w-full rounded-lg border border-input bg-background px-3 text-sm" /></label>
             <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-sm"><p className="font-medium">Image processing test</p><p className="mt-1 text-muted-foreground">The image is sent only when you run the test. Results are not a diagnosis and require clinician review.</p></div>
           </CardContent>
@@ -78,6 +80,20 @@ export function MriDemo({ service }: Props) {
       </div>
       <Button onClick={() => void runTest()} disabled={busy || !preview}><Upload /> {busy ? "Processing…" : "Run live test"}</Button>
       {error && <div role="alert" className="rounded-xl border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">{error}</div>}
+      {sampleResult && selected && !report && <Card data-testid="sample-report">
+        <CardHeader>
+          <Badge variant="secondary" className="w-fit">Sample report · instant preview</Badge>
+          <CardTitle>{selected.title}</CardTitle>
+          <CardDescription>Prewritten educational example. No AI analysis was run.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          <div><h3 className="font-medium">Simplified explanation</h3><p className="mt-2 text-sm leading-6 text-muted-foreground">{sampleResult.summary}</p></div>
+          <div><h3 className="font-medium">Reference findings</h3><div className="mt-3 space-y-3">{sampleResult.findings.map((finding) => <div key={finding.clinical} className="rounded-lg border p-4 text-sm"><p className="font-medium">{finding.clinical}</p><p className="mt-2 leading-6 text-muted-foreground">{finding.explanation}</p></div>)}</div></div>
+          <div><h3 className="font-medium">Impression</h3><p className="mt-2 text-sm leading-6 text-muted-foreground">{sampleResult.impression}</p></div>
+          <div><h3 className="font-medium">Next steps</h3><p className="mt-2 text-sm leading-6 text-muted-foreground">Explore another preset or run live analysis to request a new model review. Real scans need review by a qualified clinician.</p></div>
+          <a href={selected.sourceUrl} target="_blank" rel="noreferrer" className="inline-flex text-sm underline underline-offset-4">Image source and context</a>
+        </CardContent>
+      </Card>}
       {report && <Card><CardHeader><CardTitle>Processing result</CardTitle><CardDescription>Educational review · not a diagnosis</CardDescription></CardHeader><CardContent className="space-y-4"><p>{report.simplified_explanation}</p><div><p className="font-medium">Possible patterns</p>{report.findings.length ? <ul className="mt-2 space-y-2 text-sm text-muted-foreground">{report.findings.map((finding) => <li key={finding.id}>{finding.plain_text}</li>)}</ul> : <p className="mt-2 text-sm text-muted-foreground">No pattern was returned for review.</p>}</div><p className="text-sm text-muted-foreground">{report.uncertainty_note}</p></CardContent></Card>}
     </main>
   );

@@ -1,0 +1,9 @@
+{
+  "units": "meters",
+  "conversion": "Downloaded STEP files tessellated with OpenCascade, centered at export, deduplicated and joined by material using glTF Transform. Original hardware dimensions preserved.",
+  "assets": [
+    {"file": "camera-module-3.glb", "source": "https://pip.raspberrypi.com/categories/1207-design-files", "original": "Camera_module_3_std_model_simple.stp", "author": "Raspberry Pi Ltd"},
+    {"file": "raspberry-pi-5.glb", "source": "https://www.elecrow.com/blog/download-the-raspberry-pi-5-3d-design-stp-file-for-free-from-elecrow.html", "original": "elecrow-pi5.stp", "author": "Elecrow"},
+    {"file": "waveshare-m2-hat.glb", "source": "https://www.waveshare.com/wiki/PCIe_TO_M.2_HAT%2B", "original": "PCIe TO M.2 HAT+.step", "author": "Waveshare"}
+  ]
+}

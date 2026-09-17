@@ -23,7 +23,7 @@ export default function AppPage() {
               <CardDescription>{service.description}</CardDescription>
             </CardHeader>
             <CardFooter>
-              <Button asChild variant="outline"><Link href={`/app/${service.slug}`}>Explore {service.name} →</Link></Button>
+              <Button asChild variant="outline"><Link href={`/app/${service.slug}`}>{service.slug === "anaemia-screening" ? "Explore screening" : `Explore ${service.name}`} →</Link></Button>
             </CardFooter>
           </Card>
         ))}
