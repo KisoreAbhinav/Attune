@@ -13,7 +13,7 @@ export type IntakeState = {
 };
 
 export type Report = {
-  scan_type: "xray";
+  scan_type: "xray" | "brain_mri" | "knee_mri";
   view: string;
   patient_age: number;
   date: string;
@@ -58,6 +58,7 @@ export type ApiInput = {
   file_size: number;
   media_type: string;
   image_base64: string;
+  scan_type: "xray" | "brain_mri" | "knee_mri";
   view: string;
 };
 

@@ -27,6 +27,7 @@ class StageRequest(IntakeMetadata):
 
 
 class AnalyzeRequest(StageRequest):
+    scan_type: Literal["xray", "brain_mri", "knee_mri"] = "xray"
     view: str = Field(default="frontal", min_length=1, max_length=80)
 
 
@@ -60,7 +61,7 @@ class Recommendation(BaseModel):
 class ScanReport(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    scan_type: Literal["xray"]
+    scan_type: Literal["xray", "brain_mri", "knee_mri"]
     view: str = Field(min_length=1, max_length=80)
     patient_age: int = Field(ge=0, le=120)
     date: date

@@ -3,12 +3,15 @@ from __future__ import annotations
 import base64
 import binascii
 import io
+import json
 import os
 from abc import ABC, abstractmethod
 from datetime import date
+from functools import lru_cache
 from typing import Any
 
 from PIL import Image, ImageStat
+import httpx
 
 from .schemas import AnalyzeRequest, ChatMessage, ChatResponse, ScanReport
 
@@ -44,6 +47,16 @@ def decode_image(image_base64: str) -> Image.Image:
     except Exception as exc:
         raise ValueError("image payload could not be decoded") from exc
     return image.convert("RGB")
+
+
+def compact_image_payload(image_base64: str) -> str:
+    """Reduce oversized raster inputs before a remote processing request."""
+    image = decode_image(image_base64)
+    maximum_side = int(os.getenv("ATTUNE_PROCESSING_MAX_SIDE", "1536"))
+    image.thumbnail((maximum_side, maximum_side), Image.Resampling.LANCZOS)
+    output = io.BytesIO()
+    image.save(output, format="JPEG", quality=88, optimize=True)
+    return base64.b64encode(output.getvalue()).decode("ascii")
 
 
 class HuggingFaceXrayModel(LocalModel):
@@ -301,6 +314,131 @@ class HuggingFaceChatModel(LocalModel):
 
 def get_xray_model() -> LocalModel:
     return HuggingFaceXrayModel()
+
+
+class GeminiMedicalModel(LocalModel):
+    """Server-side Gemini adapter for the three supported raster scan types."""
+
+    def __init__(self) -> None:
+        self.model_id = os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
+        self.api_key = os.getenv("GEMINI_API_KEY")
+        self._client = httpx.Client(timeout=httpx.Timeout(20.0, connect=5.0))
+
+    def analyze_scan(self, request: AnalyzeRequest) -> ScanReport:
+        if not self.api_key:
+            raise ModelUnavailable("GEMINI_API_KEY is not configured on the API server")
+        scan_name = {"xray": "chest X-ray", "brain_mri": "brain MRI", "knee_mri": "knee MRI"}[request.scan_type]
+        visual_checklist = {
+            "xray": "Inspect both lungs, including the upper lobes, for focal or patchy opacity, infiltrate, consolidation, nodular or reticular patterns, asymmetry, pleural abnormality, and cardiac silhouette.",
+            "brain_mri": "Inspect symmetry, ventricles, parenchymal signal, mass effect, edema, focal lesions, and visible extra-axial spaces.",
+            "knee_mri": "Inspect menisci, cruciate and collateral ligaments, cartilage, marrow signal, joint fluid, and visible periarticular soft tissues.",
+        }[request.scan_type]
+        prompt = f"""Provide a compact, non-diagnostic educational review of this {scan_name}.
+First decide whether the image is technically adequate, then systematically review visible positive and negative patterns. {visual_checklist} Do not call the image normal merely because one specific sign is absent. Put visible positive patterns first and describe only what the pixels support.
+Use cautious language. Do not diagnose. The status describes processing completeness, not normality: use complete for an adequate image, indeterminate for genuinely equivocal output, and insufficient_image only for inadequate image quality. Return JSON only with: status, simplified_explanation, clinical_summary, clinical_summary_plain_note, findings, impression, impression_plain_note, recommendations, confidence, uncertainty_note. Use at most 3 findings and 3 recommendations. Every finding needs id, clinical_text, plain_text, confidence (0-1), uncertain. Every impression needs rank, clinical_text, plain_text, confidence_order (high/moderate/low/indeterminate). Every recommendation needs id, clinical_text, plain_text. State that a clinician must review the original study.
+Age: {request.age}. Notes: {request.clinical_notes or 'none'}."""
+        payload = {
+            "contents": [{"parts": [{"text": prompt}, {"inline_data": {"mime_type": "image/jpeg", "data": compact_image_payload(request.image_base64)}}]}],
+            "generationConfig": {
+                "responseMimeType": "application/json",
+                "maxOutputTokens": 1000,
+                "thinkingConfig": {"thinkingLevel": "minimal"},
+                "responseJsonSchema": {
+                    "type": "object",
+                    "required": ["status", "simplified_explanation", "clinical_summary", "clinical_summary_plain_note", "findings", "impression", "impression_plain_note", "recommendations", "confidence", "uncertainty_note"],
+                    "properties": {
+                        "status": {"type": "string", "enum": ["complete", "indeterminate", "insufficient_image"]},
+                        "simplified_explanation": {"type": "string"},
+                        "clinical_summary": {"type": "string"},
+                        "clinical_summary_plain_note": {"type": "string"},
+                        "findings": {"type": "array", "maxItems": 3, "items": {"type": "object", "required": ["id", "clinical_text", "plain_text", "confidence", "uncertain"], "properties": {"id": {"type": "string"}, "clinical_text": {"type": "string"}, "plain_text": {"type": "string"}, "confidence": {"type": "number", "minimum": 0, "maximum": 1}, "uncertain": {"type": "boolean"}}}},
+                        "impression": {"type": "array", "minItems": 1, "maxItems": 3, "items": {"type": "object", "required": ["rank", "clinical_text", "plain_text", "confidence_order"], "properties": {"rank": {"type": "integer"}, "clinical_text": {"type": "string"}, "plain_text": {"type": "string"}, "confidence_order": {"type": "string", "enum": ["high", "moderate", "low", "indeterminate"]}}}},
+                        "impression_plain_note": {"type": "string"},
+                        "recommendations": {"type": "array", "maxItems": 3, "items": {"type": "object", "required": ["id", "clinical_text", "plain_text"], "properties": {"id": {"type": "string"}, "clinical_text": {"type": "string"}, "plain_text": {"type": "string"}}}},
+                        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+                        "uncertainty_note": {"type": "string"},
+                    },
+                },
+            },
+        }
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model_id}:generateContent"
+        try:
+            response = self._client.post(url, headers={"x-goog-api-key": self.api_key}, json=payload)
+            response.raise_for_status()
+            body = response.json()
+            text = body["candidates"][0]["content"]["parts"][0]["text"]
+            result = json.loads(text)
+        except httpx.HTTPStatusError as exc:
+            detail = exc.response.text[:500].replace(self.api_key or "", "[redacted]")
+            raise ModelUnavailable(f"processing provider returned HTTP {exc.response.status_code}: {detail}") from exc
+        except (httpx.HTTPError, KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
+            raise ModelUnavailable(f"processing provider returned an invalid response ({type(exc).__name__})") from exc
+        # Gemini may use descriptive status values such as "abnormal" despite the
+        # requested vocabulary. Normalize them before enforcing our API contract.
+        reported_status = str(result.get("status", "indeterminate")).lower()
+        result["status"] = {
+            "normal": "complete",
+            "abnormal": "complete",
+            "complete": "complete",
+            "indeterminate": "indeterminate",
+            "insufficient_image": "insufficient_image",
+        }.get(reported_status, "indeterminate")
+        raw_findings = result.get("findings") if isinstance(result.get("findings"), list) else []
+        result["findings"] = [
+            {
+                "id": str(item.get("id", index)),
+                "clinical_text": str(item.get("clinical_text") or item.get("finding") or "Possible imaging pattern for review."),
+                "plain_text": str(item.get("plain_text") or item.get("explanation") or item.get("clinical_text") or "A possible pattern was returned for clinician review."),
+                "confidence": max(0.0, min(1.0, float(item.get("confidence", 0.0)))),
+                "uncertain": bool(item.get("uncertain", float(item.get("confidence", 0.0)) < 0.75)),
+            }
+            for index, item in enumerate(raw_findings, start=1)
+            if isinstance(item, dict)
+        ][:20]
+        raw_impression = result.get("impression") if isinstance(result.get("impression"), list) else []
+        result["impression"] = [
+            {
+                "rank": index,
+                "clinical_text": str(item.get("clinical_text") or item.get("impression") or "Image requires clinician review."),
+                "plain_text": str(item.get("plain_text") or item.get("explanation") or item.get("clinical_text") or "A qualified clinician should review the original study."),
+                "confidence_order": str(item.get("confidence_order", "indeterminate")).lower() if str(item.get("confidence_order", "indeterminate")).lower() in {"high", "moderate", "low", "indeterminate"} else "indeterminate",
+            }
+            for index, item in enumerate(raw_impression, start=1)
+            if isinstance(item, dict)
+        ][:10] or [{"rank": 1, "clinical_text": "Image requires clinician review.", "plain_text": "This result is not a diagnosis.", "confidence_order": "indeterminate"}]
+        raw_recommendations = result.get("recommendations") if isinstance(result.get("recommendations"), list) else []
+        result["recommendations"] = [
+            {
+                "id": str(item.get("id", index)),
+                "clinical_text": str(item.get("clinical_text") or item.get("recommendation") or "Review with a qualified clinician."),
+                "plain_text": str(item.get("plain_text") or item.get("clinical_text") or "A qualified clinician should review the original study."),
+            }
+            for index, item in enumerate(raw_recommendations, start=1)
+            if isinstance(item, dict)
+        ][:10]
+        result["confidence"] = max(0.0, min(1.0, float(result.get("confidence", max((item["confidence"] for item in result["findings"]), default=0.0)))))
+        result["uncertainty_note"] = str(result.get("uncertainty_note") or "Processing confidence is not diagnostic certainty.")
+        result.update({
+            "scan_type": request.scan_type,
+            "view": request.view,
+            "patient_age": request.age,
+            "date": date.today().isoformat(),
+            "image_reference": "active-session-raster",
+            "model_id": self.model_id,
+            "disclaimer": "Prototype output for educational use only. Not a diagnosis or substitute for a radiologist or clinician.",
+        })
+        try:
+            return ScanReport.model_validate(result)
+        except ValueError as exc:
+            raise ModelUnavailable(f"Processing response did not match the required format: {exc}") from exc
+
+    def answer_chat(self, report: ScanReport, history: list[ChatMessage], question: str) -> ChatResponse:
+        raise ModelUnavailable("Gemini scan analysis does not provide follow-up chat")
+
+
+@lru_cache(maxsize=1)
+def get_gemini_model() -> LocalModel:
+    return GeminiMedicalModel()
 
 
 def get_chat_model() -> LocalModel:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import logging
 import os
 from typing import Annotated
 
@@ -15,8 +16,8 @@ from analyzer.model import (
     LocalModel,
     ModelUnavailable,
     decode_image,
+    get_gemini_model,
     get_chat_model,
-    get_xray_model,
 )
 from analyzer.schemas import (
     AnalyzeRequest,
@@ -29,6 +30,7 @@ from analyzer.schemas import (
 )
 
 app = FastAPI(title="Attune API", version="0.2.0")
+logger = logging.getLogger("attune.api")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[os.getenv("ATTUNE_WEB_ORIGIN", "http://localhost:3000")],
@@ -65,7 +67,7 @@ def stage_scan(request: StageRequest) -> dict[str, object]:
 @app.post("/api/scan/analyze", response_model=ScanReport)
 def analyze_scan(
     request: AnalyzeRequest,
-    model: Annotated[LocalModel, Depends(get_xray_model)],
+    model: Annotated[LocalModel, Depends(get_gemini_model)],
 ) -> ScanReport:
     try:
         report = model.analyze_scan(request)
@@ -73,9 +75,10 @@ def analyze_scan(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except ModelUnavailable as exc:
+        logger.warning("Scan processing unavailable: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Local X-ray model is unavailable. Check model installation and configuration.",
+            detail="Processing is temporarily unavailable. Please try again shortly.",
         ) from exc
 
 

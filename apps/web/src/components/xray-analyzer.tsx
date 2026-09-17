@@ -2,11 +2,14 @@
 
 import { useEffect, useMemo, useRef, useState, type FormEvent, type InputHTMLAttributes, type PointerEvent } from "react";
 import { ArrowLeft, Check, Download, FileImage, LoaderCircle, MessageCircle, Move, RefreshCw, Ruler, ScanLine, ZoomIn, ZoomOut } from "lucide-react";
+import Image from "next/image";
 import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { parseDicom, renderDicomFrame } from "@/lib/dicom";
+import { demoScans } from "@/lib/demo-scans";
 import { apiRequest, fileToBase64, imageToBase64, type ApiInput, type ChatMessage, type IntakeState, type Report, type ScanMode } from "@/lib/xray";
 
 type Point = { x: number; y: number };
@@ -64,6 +67,7 @@ export function XrayAnalyzer() {
   const [measurePoints, setMeasurePoints] = useState<Point[]>([]);
   const [annotations, setAnnotations] = useState<Array<Point & { label: string }>>([]);
   const [annotationLabel, setAnnotationLabel] = useState("Review");
+  const [sampleId, setSampleId] = useState("");
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const dragRef = useRef<{ x: number; y: number; panX: number; panY: number } | null>(null);
 
@@ -119,6 +123,25 @@ export function XrayAnalyzer() {
     }
     setState((current) => ({ ...current, file, dicom: null }));
     setNotice("Image selected. It remains in this browser until you explicitly start analysis.");
+  }
+
+  async function chooseReferenceSample(id: string) {
+    const sample = demoScans["x-ray"].find((item) => item.id === id);
+    if (!sample) return;
+    setSampleId(id);
+    setError(null);
+    setReport(null);
+    setNotice(null);
+    try {
+      const response = await fetch(sample.path);
+      if (!response.ok) throw new Error("The selected reference image could not be loaded.");
+      const blob = await response.blob();
+      const extension = sample.path.split(".").pop() ?? "jpg";
+      await handleFile(new File([blob], `attune-${sample.id}.${extension}`, { type: blob.type }));
+      setNotice(`${sample.label}: ${sample.title}. This source-labelled reference image is for testing and education only.`);
+    } catch (sampleError) {
+      setError(sampleError instanceof Error ? sampleError.message : "The selected reference image could not be loaded.");
+    }
   }
 
   function pointerPoint(event: PointerEvent<HTMLDivElement>): Point {
@@ -194,23 +217,13 @@ export function XrayAnalyzer() {
         file_size: state.file.size,
         media_type: state.mode === "dicom" ? "image/png" : state.file.type || "application/octet-stream",
         image_base64: imageBase64,
+        scan_type: "xray",
         view: "frontal",
       };
-      const stageInput = {
-        age: input.age,
-        gender: input.gender,
-        clinical_notes: input.clinical_notes,
-        scan_mode: input.scan_mode,
-        file_name: input.file_name,
-        file_size: input.file_size,
-        media_type: input.media_type,
-      };
-      await apiRequest<{ valid: boolean }>("/api/scan/validate", stageInput);
-      await apiRequest<{ valid: boolean }>("/api/scan/stage", { ...stageInput, image_base64: imageBase64 });
       const result = await apiRequest<Report>("/api/scan/analyze", input);
       setReport(result);
       setHistory([]);
-      setNotice("The local model completed this active-session analysis. It is not a diagnosis.");
+      setNotice("Processing completed for this active-session analysis. It is not a diagnosis.");
     } catch (analysisError) {
       setError(analysisError instanceof Error ? analysisError.message : "Analysis failed. Check the local API and model configuration.");
     } finally {
@@ -269,12 +282,12 @@ export function XrayAnalyzer() {
     <main className="mx-auto min-h-screen w-full max-w-7xl space-y-8 px-4 py-8 sm:px-6 lg:px-8 lg:py-12">
       <div className="flex items-center justify-between gap-4">
         <Button asChild variant="ghost"><Link href="/app"><ArrowLeft /> All services</Link></Button>
-        <Badge variant="outline"><ScanLine /> Local model workflow</Badge>
+        <Badge variant="outline"><ScanLine /> Processing workflow</Badge>
       </div>
       <header className="max-w-3xl space-y-3">
         <Badge variant="secondary">X-ray Analyzer · Prototype</Badge>
-        <h1 className="text-3xl font-semibold tracking-tight sm:text-5xl">Review an X-ray with a local model</h1>
-        <p className="text-muted-foreground">Parse an image or DICOM study in your browser, inspect the active session, and request a structured report from the configured Hugging Face model running in FastAPI.</p>
+        <h1 className="text-3xl font-semibold tracking-tight sm:text-5xl">Review an X-ray</h1>
+        <p className="text-muted-foreground">Parse an image or DICOM study in your browser, inspect the active session, and request a structured educational review through FastAPI.</p>
       </header>
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1.1fr)_minmax(360px,0.9fr)]">
@@ -293,9 +306,10 @@ export function XrayAnalyzer() {
                   </button>
                 ))}
               </div>
+              {state.mode === "single_image" && <div className="space-y-2"><label htmlFor="xray-reference" className="text-sm font-medium">Reference collection</label><Select value={sampleId} onValueChange={(value) => void chooseReferenceSample(value)}><SelectTrigger id="xray-reference" className="w-full"><SelectValue placeholder="Choose a normal or abnormal X-ray" /></SelectTrigger><SelectContent><SelectGroup><SelectLabel>Normal · 4 scans</SelectLabel>{demoScans["x-ray"].filter((sample) => sample.label === "Normal reference").map((sample) => <SelectItem key={sample.id} value={sample.id}>{sample.title}</SelectItem>)}</SelectGroup><SelectGroup><SelectLabel>Abnormal · 4 scans</SelectLabel>{demoScans["x-ray"].filter((sample) => sample.label === "Abnormal reference").map((sample) => <SelectItem key={sample.id} value={sample.id}>{sample.title}</SelectItem>)}</SelectGroup></SelectContent></Select><p className="text-xs text-muted-foreground">Locally bundled, source-labelled educational references. Selecting one loads it into this active session.</p></div>}
               <div className="space-y-2">
                 <label htmlFor="scan-file" className="text-sm font-medium">{state.mode === "dicom" ? "DICOM file or folder" : "X-ray image"}</label>
-                <input id="scan-file" type="file" accept={state.mode === "dicom" ? ".dcm,application/dicom" : "image/png,image/jpeg,image/webp"} multiple={state.mode === "dicom"} {...(state.mode === "dicom" ? directoryInputProps : {})} onChange={(event) => void handleFile(event.target.files?.[0])} className="block w-full rounded-lg border border-input bg-background px-3 py-2 text-sm file:mr-3 file:rounded-md file:border-0 file:bg-muted file:px-3 file:py-1.5 file:text-sm" aria-describedby="file-help" />
+                <input id="scan-file" type="file" accept={state.mode === "dicom" ? ".dcm,application/dicom" : "image/png,image/jpeg,image/webp"} multiple={state.mode === "dicom"} {...(state.mode === "dicom" ? directoryInputProps : {})} onChange={(event) => { setSampleId(""); void handleFile(event.target.files?.[0]); }} className="block w-full rounded-lg border border-input bg-background px-3 py-2 text-sm file:mr-3 file:rounded-md file:border-0 file:bg-muted file:px-3 file:py-1.5 file:text-sm" aria-describedby="file-help" />
                 <p id="file-help" className="text-xs text-muted-foreground">Maximum 20 MB. DICOM parsing is client-side; unsupported compressed transfer syntaxes are rejected.</p>
               </div>
               <div className="grid gap-4 sm:grid-cols-2">
@@ -331,7 +345,7 @@ export function XrayAnalyzer() {
               {tool === "annotate" && <label className="block text-xs font-medium">Annotation label<input value={annotationLabel} onChange={(event) => setAnnotationLabel(event.target.value)} className="mt-1 h-8 w-full rounded-md border border-input bg-background px-2 text-sm" /></label>}
               <div className="relative flex min-h-[320px] items-center justify-center overflow-hidden rounded-xl border bg-black sm:min-h-[440px]" onPointerDown={handleViewerPointerDown} onPointerMove={handleViewerPointerMove} onPointerUp={() => { dragRef.current = null; }} onPointerCancel={() => { dragRef.current = null; }}>
                 {!state.file && <div className="max-w-xs px-6 text-center text-sm text-zinc-400">Select a scan to open the viewer.</div>}
-                {state.file && state.mode === "single_image" && previewUrl && <img src={previewUrl} alt="Selected X-ray preview" className="max-h-full max-w-full object-contain" style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }} draggable={false} />}
+                {state.file && state.mode === "single_image" && previewUrl && <Image src={previewUrl} alt="Selected X-ray preview" fill unoptimized sizes="(min-width: 1024px) 55vw, 100vw" className="object-contain" style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }} draggable={false} />}
                 {state.dicom && <div className="relative" style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }}><canvas ref={canvasRef} className="max-h-[70vh] max-w-full object-contain" aria-label="Rendered DICOM image" /><span className="absolute left-2 top-2 text-xs font-semibold text-white">R</span><span className="absolute right-2 top-2 text-xs font-semibold text-white">L</span><span className="absolute bottom-2 left-2 text-xs font-semibold text-white">SUP</span><span className="absolute bottom-2 right-2 text-xs font-semibold text-white">INF</span>{crosshair && <><span className="pointer-events-none absolute inset-x-0 top-1/2 border-t border-cyan-300/80" /><span className="pointer-events-none absolute inset-y-0 left-1/2 border-l border-cyan-300/80" /></>}{annotations.map((item, index) => <span key={`${item.label}-${index}`} className="absolute rounded bg-cyan-300 px-1 text-[10px] font-semibold text-black" style={{ left: `${item.x}%`, top: `${item.y}%` }}>{item.label}</span>)}{measurePoints.length === 2 && <svg className="pointer-events-none absolute inset-0 h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none"><line x1={measurePoints[0].x} y1={measurePoints[0].y} x2={measurePoints[1].x} y2={measurePoints[1].y} stroke="#67e8f9" strokeWidth="0.7" /><text x={measurePoints[1].x} y={measurePoints[1].y} fill="#67e8f9" fontSize="4">measurement</text></svg>}</div>}
               </div>
               {state.dicom && <div className="grid gap-2 text-xs text-muted-foreground sm:grid-cols-3"><span>Modality: {state.dicom.metadata.modality ?? "DICOM"}</span><span>Dimensions: {state.dicom.metadata.columns} × {state.dicom.metadata.rows}</span><span>Frames: {state.dicom.metadata.numberOfFrames}</span></div>}
@@ -340,8 +354,8 @@ export function XrayAnalyzer() {
           </Card>
 
           <Card>
-            <CardHeader><CardTitle>3. Analyze</CardTitle><CardDescription>The selected raster is sent only after this action to the stateless FastAPI endpoint and then discarded by the server.</CardDescription></CardHeader>
-              <CardContent><form onSubmit={(event) => void runAnalysis(event)}><Button type="submit" disabled={busy || !state.file} className="w-full sm:w-auto">{busy ? <><LoaderCircle className="animate-spin motion-reduce:animate-none" /> Running local model…</> : <><ScanLine /> Analyze active scan</>}</Button></form></CardContent>
+            <CardHeader><CardTitle>3. Analyze</CardTitle><CardDescription>The selected raster is sent only after this action through the FastAPI endpoint.</CardDescription></CardHeader>
+              <CardContent><form onSubmit={(event) => void runAnalysis(event)}><Button type="submit" disabled={busy || !state.file} className="w-full sm:w-auto">{busy ? <><LoaderCircle className="animate-spin motion-reduce:animate-none" /> Processing…</> : <><ScanLine /> Analyze active scan</>}</Button></form></CardContent>
           </Card>
         </section>
 
@@ -351,7 +365,7 @@ export function XrayAnalyzer() {
           {!report && <Card><CardHeader><CardTitle>Structured report</CardTitle><CardDescription>After a successful local inference request, the report, uncertainty, chat history, and PDF payload live only in this page.</CardDescription></CardHeader><CardContent><div className="flex items-center gap-3 rounded-lg border border-dashed p-5 text-sm text-muted-foreground"><MessageCircle /> Report sections will appear here.</div></CardContent></Card>}
           {report && <>
             <Card>
-              <CardHeader><div className="flex flex-wrap items-start justify-between gap-3"><div><Badge variant={report.status === "complete" ? "secondary" : "destructive"}>{statusCopy(report.status)}</Badge><CardTitle className="mt-3">X-ray analysis report</CardTitle><CardDescription>{report.date} · age {report.patient_age} · {report.model_id}</CardDescription></div><Button type="button" variant="outline" onClick={() => void exportPdf()}><Download /> Export PDF</Button></div></CardHeader>
+              <CardHeader><div className="flex flex-wrap items-start justify-between gap-3"><div><Badge variant={report.status === "complete" ? "secondary" : "destructive"}>{statusCopy(report.status)}</Badge><CardTitle className="mt-3">X-ray analysis report</CardTitle><CardDescription>{report.date} · age {report.patient_age}</CardDescription></div><Button type="button" variant="outline" onClick={() => void exportPdf()}><Download /> Export PDF</Button></div></CardHeader>
               <CardContent className="space-y-5"><div className="rounded-lg border bg-muted/30 p-4"><p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Plain-language explanation</p><p className="mt-2 text-sm">{report.simplified_explanation}</p></div><div><h2 className="font-medium">Clinical summary</h2><p className="mt-2 text-sm text-muted-foreground">{report.clinical_summary}</p><p className="mt-2 text-sm">{report.clinical_summary_plain_note}</p></div><div><h2 className="font-medium">Findings</h2><div className="mt-2 space-y-3">{report.findings.length ? report.findings.map((finding) => <div key={finding.id} className="rounded-lg border p-3"><div className="flex items-center justify-between gap-3"><p className="text-sm font-medium">{finding.clinical_text}</p><span className="text-xs text-muted-foreground">{Math.round(finding.confidence * 100)}%</span></div><p className="mt-1 text-sm text-muted-foreground">{finding.plain_text}</p></div>) : <p className="text-sm text-muted-foreground">No findings crossed the configured threshold.</p>}</div></div><div><h2 className="font-medium">Impression</h2><div className="mt-2 space-y-3">{report.impression.map((item) => <div key={item.rank} className="rounded-lg border p-3"><p className="text-sm font-medium">{item.rank}. {item.clinical_text}</p><p className="mt-1 text-sm text-muted-foreground">{item.plain_text}</p><Badge variant="outline" className="mt-2">{item.confidence_order} confidence order</Badge></div>)}</div><p className="mt-3 text-sm">{report.impression_plain_note}</p></div><div><h2 className="font-medium">Recommendations</h2><div className="mt-2 space-y-2">{report.recommendations.map((item) => <div key={item.id} className="rounded-lg border p-3 text-sm"><p>{item.clinical_text}</p><p className="mt-1 text-muted-foreground">{item.plain_text}</p></div>)}</div></div><div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-sm"><p className="font-medium">Uncertainty and safety</p><p className="mt-1">{report.uncertainty_note}</p><p className="mt-2 text-muted-foreground">{report.disclaimer}</p></div></CardContent>
             </Card>
             <Card>
