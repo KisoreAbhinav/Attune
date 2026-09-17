@@ -1,5 +1,6 @@
 import asyncio
 from io import BytesIO
+from types import SimpleNamespace
 
 import httpx2
 import pymupdf
@@ -161,3 +162,20 @@ def test_schema_failure_does_not_use_alternate_provider(monkeypatch):
     assert response.status_code == 422
     assert response.json()["detail"]["code"] == "invalid_provider_response"
     assert calls == ["gemini"]
+
+
+def test_gemini_uses_json_mode_without_generated_response_schema(monkeypatch):
+    captured = {}
+
+    class Models:
+        def generate_content(self, **kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace(text="{}")
+
+    monkeypatch.setenv("GEMINI_API_KEY", "gemini-secret")
+    monkeypatch.setattr(lab_reports.genai, "Client", lambda **_kwargs: SimpleNamespace(models=Models()))
+
+    lab_reports._gemini([b"image"])
+
+    assert captured["config"].response_mime_type == "application/json"
+    assert captured["config"].response_json_schema is None

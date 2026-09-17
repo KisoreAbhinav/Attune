@@ -1,5 +1,4 @@
 import base64
-import json
 import os
 from collections.abc import Callable
 from io import BytesIO
@@ -25,7 +24,7 @@ MODELS = {
 
 PROMPT = """You explain consumer lab reports for educational use. Read only the attached report pages.
 
-Return JSON matching the supplied schema. Extract only clearly observable lab tests. Preserve printed values, units, reference ranges, flags, and page numbers exactly. Omit uncertain optional fields instead of guessing. Never supply your own clinical reference range.
+Return valid JSON only. Use this shape: {"tests":[{"name":"","value":"","unit":"","reference_range":"","flag":"","confidence":"high|medium|low","warning":"","source_page":1,"explanation":{"summary":"","common_reasons":[""]}}],"warnings":[""],"questions_for_clinician":[""],"disclaimer":""}. `name`, `confidence`, `tests`, `warnings`, `questions_for_clinician`, and `disclaimer` are required. Omit uncertain optional fields instead of using empty strings. Extract only clearly observable lab tests. Preserve printed values, units, reference ranges, flags, and page numbers exactly. Never supply your own clinical reference range.
 
 For values the report itself marks out of range, add a short plain-language explanation, common explicitly non-exclusive reasons the value may vary, and useful questions for a clinician. Do not name or diagnose diseases. Do not recommend treatment. Do not determine that any value is an emergency. A critical flag may be copied only when it is visibly printed by the lab. Keep the disclaimer explicit: educational information only, not diagnosis or treatment advice. If no supported lab values are legible, return an empty tests list and explain why in warnings."""
 
@@ -141,7 +140,6 @@ def _gemini(images: list[bytes]) -> str:
             contents=contents,
             config=google_types.GenerateContentConfig(
                 response_mime_type="application/json",
-                response_json_schema=AnalysisResult.model_json_schema(),
                 temperature=0,
             ),
         )
@@ -163,10 +161,7 @@ def _groq(images: list[bytes]) -> str:
         response = Groq(api_key=os.environ["GROQ_API_KEY"]).chat.completions.create(
             model=MODELS["groq"],
             messages=[{"role": "user", "content": [{"type": "text", "text": PROMPT}, *visual_parts]}],
-            response_format={
-                "type": "json_schema",
-                "json_schema": {"name": "lab_report_analysis", "schema": AnalysisResult.model_json_schema()},
-            },
+            response_format={"type": "json_object"},
             temperature=0,
         )
     except (RateLimitError, APITimeoutError, APIConnectionError) as error:
